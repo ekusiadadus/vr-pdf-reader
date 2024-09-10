@@ -9,6 +9,8 @@
 	let vrPDFReader;
 	let pdfjsLib;
 	let isVRAvailable = false;
+	let currentPage = 1;
+	let totalPages = 0;
 
 	// Promise.withResolvers polyfill
 	if (typeof Promise.withResolvers === 'undefined') {
@@ -42,6 +44,7 @@
 			this.currentPage = 1;
 			this.pdfTexture = null;
 			this.pdfMesh = null;
+			this.pageTextMesh = null;
 		}
 
 		async initialize() {
@@ -78,6 +81,14 @@
 			this.engine.runRenderLoop(() => {
 				this.scene.render();
 			});
+			this.pageTextMesh = BABYLON.MeshBuilder.CreatePlane(
+				'pageText',
+				{ width: 0.5, height: 0.1 },
+				this.scene
+			);
+			this.pageTextMesh.position.set(0, -1.1, 2); // Position below the PDF
+			const pageTextMaterial = new BABYLON.StandardMaterial('pageTextMaterial', this.scene);
+			this.pageTextMesh.material = pageTextMaterial;
 
 			window.addEventListener('resize', () => {
 				this.engine.resize();
@@ -100,6 +111,7 @@
 		async loadPDF(url) {
 			const loadingTask = pdfjsLib.getDocument(url);
 			this.pdfDoc = await loadingTask.promise;
+			totalPages = this.pdfDoc.numPages;
 			await this.renderPage(1);
 		}
 
@@ -127,6 +139,7 @@
 				{ width: canvas.width, height: canvas.height },
 				this.scene
 			);
+
 			const ctx = this.pdfTexture.getContext();
 			ctx.drawImage(canvas, 0, 0, canvas.width, canvas.height);
 			this.pdfTexture.update();
@@ -136,6 +149,19 @@
 			this.pdfMesh.material = material;
 
 			this.currentPage = num;
+			currentPage = num; // Update the Svelte store
+			this.updatePageNumberText();
+		}
+		updatePageNumberText() {
+			const dynamicTexture = new BABYLON.DynamicTexture('pageNumberTexture', 256, this.scene, true);
+			const ctx = dynamicTexture.getContext();
+			ctx.font = '24px Arial';
+			ctx.fillStyle = 'white';
+			ctx.textAlign = 'center';
+			ctx.fillText(`Page ${this.currentPage} / ${totalPages}`, 128, 40);
+			dynamicTexture.update();
+
+			this.pageTextMesh.material.diffuseTexture = dynamicTexture;
 		}
 
 		nextPage() {
@@ -169,13 +195,24 @@
 			await vrPDFReader.loadPDF('/cannovelresearch.pdf');
 		}
 	});
+
+	function handleKeydown(event) {
+		if (event.key === 'ArrowRight') {
+			vrPDFReader.nextPage();
+		} else if (event.key === 'ArrowLeft') {
+			vrPDFReader.prevPage();
+		}
+	}
 </script>
+
+<svelte:window on:keydown={handleKeydown} />
 
 <canvas bind:this={canvas}></canvas>
 
 {#if !isVRAvailable}
 	<div class="non-vr-controls">
 		<button on:click={() => vrPDFReader.prevPage()}>Previous Page</button>
+		<span>Page {currentPage} / {totalPages}</span>
 		<button on:click={() => vrPDFReader.nextPage()}>Next Page</button>
 	</div>
 {/if}
@@ -190,5 +227,14 @@
 		bottom: 20px;
 		left: 50%;
 		transform: translateX(-50%);
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		background-color: rgba(0, 0, 0, 0.5);
+		padding: 10px;
+		border-radius: 5px;
+	}
+	.non-vr-controls span {
+		color: white;
 	}
 </style>
