@@ -56,7 +56,7 @@
 				'camera',
 				-Math.PI / 2,
 				Math.PI / 2.5,
-				1.1, // カメラの距離を1.5に変更してPDFをより近くに
+				0.9, // カメラの距離を1.5に変更してPDFをより近くに
 				new BABYLON.Vector3(0, 0, 0),
 				this.scene
 			);
