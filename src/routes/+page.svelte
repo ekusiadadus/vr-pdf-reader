@@ -9,6 +9,7 @@
 	let vrPDFReader;
 	let pdfjsLib;
 	let isVRAvailable = false;
+	let isInVR = false;
 
 	// Promise.withResolvers polyfill
 	if (typeof Promise.withResolvers === 'undefined') {
@@ -42,6 +43,7 @@
 			this.currentPage = 1;
 			this.pdfTexture = null;
 			this.pdfMesh = null;
+			this.isFlipping = false;
 		}
 
 		async initialize() {
@@ -57,14 +59,25 @@
 			new BABYLON.HemisphericLight('light', new BABYLON.Vector3(0, 1, 0), this.scene);
 
 			if (isVRAvailable) {
-				const vrHelper = this.scene.createDefaultVRExperience({
-					createDeviceOrientationCamera: false
+				const xrHelper = await this.scene.createDefaultXRExperienceAsync({
+					floorMeshes: [
+						BABYLON.MeshBuilder.CreateGround('ground', { width: 6, height: 6 }, this.scene)
+					]
 				});
-				if (vrHelper.isAvailable) {
-					vrHelper.enableInteractions();
-					this.setupControllers(vrHelper);
+
+				if (xrHelper.baseExperience) {
+					xrHelper.baseExperience.onStateChangedObservable.add((state) => {
+						if (state === BABYLON.WebXRState.IN_XR) {
+							isInVR = true;
+						} else if (state === BABYLON.WebXRState.NOT_IN_XR) {
+							isInVR = false;
+						}
+					});
+
+					this.setupControllers(xrHelper);
+					this.setupExitVRButton(xrHelper);
 				} else {
-					console.warn('VR is not available on this device/browser');
+					console.warn('WebXR not available on this device/browser');
 				}
 			}
 
@@ -84,19 +97,49 @@
 			});
 		}
 
-		setupControllers(vrHelper) {
-			vrHelper.onControllerMeshLoaded.add((webVRController) => {
-				webVRController.onTriggerStateChangedObservable.add((state) => {
-					if (state.value > 0.5) {
-						if (webVRController.hand === 'left') {
-							this.prevPage();
-						} else {
-							this.nextPage();
-						}
-					}
+		setupControllers(xrHelper) {
+			xrHelper.input.onControllerAddedObservable.add((controller) => {
+				controller.onMotionControllerInitObservable.add((motionController) => {
+					const xr_ids = motionController.getComponentIds();
+					// biome-ignore lint/complexity/noForEach: <explanation>
+					xr_ids.forEach((id) => {
+						const component = motionController.getComponent(id);
+						component.onButtonStateChangedObservable.add((component) => {
+							if (component.pressed) {
+								if (component.id === 'xr-standard-trigger') {
+									if (motionController.handness === 'left') {
+										this.prevPage();
+									} else {
+										this.nextPage();
+									}
+								}
+							}
+						});
+					});
 				});
 			});
 		}
+
+		setupExitVRButton(xrHelper) {
+			const exitVRButton = BABYLON.GUI.Button.CreateSimpleButton('exitVR', 'Exit VR');
+			exitVRButton.width = '150px';
+			exitVRButton.height = '40px';
+			exitVRButton.color = 'white';
+			exitVRButton.cornerRadius = 20;
+			exitVRButton.background = 'green';
+			exitVRButton.onPointerUpObservable.add(() => {
+				xrHelper.baseExperience.exitXRAsync();
+			});
+
+			const advancedTexture = BABYLON.GUI.AdvancedDynamicTexture.CreateFullscreenUI('UI');
+			advancedTexture.addControl(exitVRButton);
+			exitVRButton.isVisible = false;
+
+			xrHelper.baseExperience.onStateChangedObservable.add((state) => {
+				exitVRButton.isVisible = state === BABYLON.WebXRState.IN_XR;
+			});
+		}
+
 		async loadPDF(url) {
 			const loadingTask = pdfjsLib.getDocument(url);
 			this.pdfDoc = await loadingTask.promise;
@@ -104,6 +147,9 @@
 		}
 
 		async renderPage(num) {
+			if (this.isFlipping) return;
+			this.isFlipping = true;
+
 			const page = await this.pdfDoc.getPage(num);
 			const scale = 1.5;
 			const viewport = page.getViewport({ scale });
@@ -119,23 +165,63 @@
 			};
 			await page.render(renderContext).promise;
 
-			if (this.pdfTexture) {
-				this.pdfTexture.dispose();
-			}
-			this.pdfTexture = new BABYLON.DynamicTexture(
+			const newTexture = new BABYLON.DynamicTexture(
 				'pdfTexture',
 				{ width: canvas.width, height: canvas.height },
 				this.scene
 			);
-			const ctx = this.pdfTexture.getContext();
+			const ctx = newTexture.getContext();
 			ctx.drawImage(canvas, 0, 0, canvas.width, canvas.height);
-			this.pdfTexture.update();
+			newTexture.update();
 
-			const material = new BABYLON.StandardMaterial('pdfMaterial', this.scene);
-			material.diffuseTexture = this.pdfTexture;
-			this.pdfMesh.material = material;
+			// Create a new material for the new page
+			const newMaterial = new BABYLON.StandardMaterial('pdfMaterial', this.scene);
+			newMaterial.diffuseTexture = newTexture;
 
+			// Create a new mesh for the new page
+			const newMesh = BABYLON.MeshBuilder.CreatePlane(
+				'pdfPlane',
+				{ width: 1.5, height: 2 },
+				this.scene
+			);
+			newMesh.material = newMaterial;
+
+			// Position the new mesh
+			newMesh.position = this.pdfMesh.position.clone();
+			if (num > this.currentPage) {
+				newMesh.position.x += 1.5;
+			} else {
+				newMesh.position.x -= 1.5;
+			}
+
+			// Animate the page turn
+			const animationDuration = 500;
+			BABYLON.Animation.CreateAndStartAnimation(
+				'turnPage',
+				this.pdfMesh,
+				'position',
+				60,
+				animationDuration / (1000 / 60),
+				this.pdfMesh.position,
+				newMesh.position,
+				BABYLON.Animation.ANIMATIONLOOPMODE_CONSTANT
+			);
+
+			await new Promise((resolve) => setTimeout(resolve, animationDuration));
+
+			// Clean up
+			if (this.pdfTexture) {
+				this.pdfTexture.dispose();
+			}
+			if (this.pdfMesh) {
+				this.pdfMesh.dispose();
+			}
+
+			this.pdfTexture = newTexture;
+			this.pdfMesh = newMesh;
 			this.currentPage = num;
+
+			this.isFlipping = false;
 		}
 
 		nextPage() {
@@ -173,7 +259,7 @@
 
 <canvas bind:this={canvas}></canvas>
 
-{#if !isVRAvailable}
+{#if !isInVR}
 	<div class="non-vr-controls">
 		<button on:click={() => vrPDFReader.prevPage()}>Previous Page</button>
 		<button on:click={() => vrPDFReader.nextPage()}>Next Page</button>
