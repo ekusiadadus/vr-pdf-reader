@@ -9,7 +9,6 @@
 	let vrPDFReader;
 	let pdfjsLib;
 	let isVRAvailable = false;
-	let isInVR = false;
 
 	// Promise.withResolvers polyfill
 	if (typeof Promise.withResolvers === 'undefined') {
@@ -37,247 +36,73 @@
 	class VRPDFReader {
 		constructor(canvas) {
 			this.canvas = canvas;
-			this.engine = null;
-			this.scene = null;
+			this.engine = new BABYLON.Engine(this.canvas, true);
+			this.scene = new BABYLON.Scene(this.engine);
 			this.pdfDoc = null;
 			this.currentPage = 1;
 			this.pdfTexture = null;
 			this.pdfMesh = null;
-			this.isFlipping = false;
-			this.loadingTexture = null;
-			this.pageInfoTexture = null;
-			this.isInitialized = false;
-			this.xrHelper = null;
 		}
 
 		async initialize() {
-			try {
-				this.engine = new BABYLON.Engine(this.canvas, true);
-				this.scene = new BABYLON.Scene(this.engine);
-				this.scene.clearColor = new BABYLON.Color4(0, 0, 0, 1);
+			const camera = new BABYLON.ArcRotateCamera(
+				'camera',
+				-Math.PI / 2,
+				Math.PI / 2.5,
+				3,
+				new BABYLON.Vector3(0, 0, 0),
+				this.scene
+			);
+			camera.attachControl(this.canvas, true);
+			new BABYLON.HemisphericLight('light', new BABYLON.Vector3(0, 1, 0), this.scene);
 
-				const camera = new BABYLON.ArcRotateCamera(
-					'camera',
-					-Math.PI / 2,
-					Math.PI / 2.5,
-					3,
-					new BABYLON.Vector3(0, 0, 0),
-					this.scene
-				);
-				camera.attachControl(this.canvas, true);
-				new BABYLON.HemisphericLight('light', new BABYLON.Vector3(0, 1, 0), this.scene);
-
-				if (isVRAvailable) {
-					this.xrHelper = await this.scene.createDefaultXRExperienceAsync({
-						floorMeshes: [
-							BABYLON.MeshBuilder.CreateGround('ground', { width: 6, height: 6 }, this.scene)
-						],
-						uiOptions: {
-							sessionMode: 'immersive-vr',
-							referenceSpaceType: 'local-floor'
-						},
-						optionalFeatures: true
-					});
-
-					const groundMaterial = new BABYLON.StandardMaterial('groundMaterial', this.scene);
-					groundMaterial.diffuseColor = new BABYLON.Color3(0.2, 0.2, 0.2);
-					groundMaterial.alpha = 0.5;
-					this.xrHelper.baseExperience.renderTarget.renderList[0].material = groundMaterial;
-
-					if (this.xrHelper.baseExperience) {
-						this.xrHelper.baseExperience.onStateChangedObservable.add((state) => {
-							if (state === BABYLON.WebXRState.IN_XR) {
-								isInVR = true;
-								this.adjustForVR();
-							} else if (state === BABYLON.WebXRState.NOT_IN_XR) {
-								isInVR = false;
-								this.adjustForNonVR();
-							}
-						});
-
-						this.setupControllers();
-						this.setupExitVRButton();
-					} else {
-						console.warn('WebXR not available on this device/browser');
-					}
+			if (isVRAvailable) {
+				const vrHelper = this.scene.createDefaultVRExperience({
+					createDeviceOrientationCamera: false
+				});
+				if (vrHelper.isAvailable) {
+					vrHelper.enableInteractions();
+					this.setupControllers(vrHelper);
+				} else {
+					console.warn('VR is not available on this device/browser');
 				}
-
-				this.pdfMesh = BABYLON.MeshBuilder.CreatePlane(
-					'pdfPlane',
-					{ width: 1.5, height: 2 },
-					this.scene
-				);
-				this.pdfMesh.position.z = 2;
-
-				await this.createLoadingIndicator();
-				await this.createPageInfo();
-
-				this.engine.runRenderLoop(() => {
-					this.scene.render();
-				});
-
-				window.addEventListener('resize', () => {
-					this.engine.resize();
-				});
-
-				this.isInitialized = true;
-			} catch (error) {
-				console.error('Error during initialization:', error);
-				this.updateLoadingTexture('Error initializing VR PDF Reader');
 			}
+
+			this.pdfMesh = BABYLON.MeshBuilder.CreatePlane(
+				'pdfPlane',
+				{ width: 1.5, height: 2 },
+				this.scene
+			);
+			this.pdfMesh.position.z = 2;
+
+			this.engine.runRenderLoop(() => {
+				this.scene.render();
+			});
+
+			window.addEventListener('resize', () => {
+				this.engine.resize();
+			});
 		}
 
-		adjustForVR() {
-			if (this.pdfMesh) {
-				this.pdfMesh.position = new BABYLON.Vector3(0, 1.6, 2);
-				this.pdfMesh.rotation = new BABYLON.Vector3(0, 0, 0);
-			}
-		}
-
-		adjustForNonVR() {
-			if (this.pdfMesh) {
-				this.pdfMesh.position = new BABYLON.Vector3(0, 0, 2);
-				this.pdfMesh.rotation = new BABYLON.Vector3(0, 0, 0);
-			}
-		}
-
-		setupControllers() {
-			if (!this.xrHelper) return;
-
-			this.xrHelper.input.onControllerAddedObservable.add((controller) => {
-				controller.onMotionControllerInitObservable.add((motionController) => {
-					const xr_ids = motionController.getComponentIds();
-					let triggerComponent = motionController.getComponent(xr_ids[0]);
-
-					triggerComponent.onButtonStateChangedObservable.add((component) => {
-						if (component.pressed) {
-							if (controller.handedness === 'left') {
-								this.prevPage();
-							} else if (controller.handedness === 'right') {
-								this.nextPage();
-							}
+		setupControllers(vrHelper) {
+			vrHelper.onControllerMeshLoaded.add((webVRController) => {
+				webVRController.onTriggerStateChangedObservable.add((state) => {
+					if (state.value > 0.5) {
+						if (webVRController.hand === 'left') {
+							this.prevPage();
+						} else {
+							this.nextPage();
 						}
-					});
+					}
 				});
 			});
 		}
-
-		setupExitVRButton() {
-			if (!this.xrHelper) return;
-
-			const exitVRButton = document.createElement('button');
-			exitVRButton.textContent = 'Exit VR';
-			exitVRButton.style.position = 'absolute';
-			exitVRButton.style.bottom = '10px';
-			exitVRButton.style.left = '10px';
-			exitVRButton.style.display = 'none';
-
-			exitVRButton.onclick = () => {
-				this.xrHelper.baseExperience.exitXRAsync();
-			};
-
-			this.xrHelper.baseExperience.onStateChangedObservable.add((state) => {
-				if (state === BABYLON.WebXRState.IN_XR) {
-					exitVRButton.style.display = 'block';
-				} else if (state === BABYLON.WebXRState.NOT_IN_XR) {
-					exitVRButton.style.display = 'none';
-				}
-			});
-
-			document.body.appendChild(exitVRButton);
-		}
-		async createLoadingIndicator() {
-			const loadingMaterial = new BABYLON.StandardMaterial('loadingMaterial', this.scene);
-			this.loadingTexture = new BABYLON.DynamicTexture(
-				'loadingTexture',
-				{ width: 512, height: 256 },
-				this.scene
-			);
-			loadingMaterial.diffuseTexture = this.loadingTexture;
-
-			const loadingPlane = BABYLON.MeshBuilder.CreatePlane(
-				'loadingPlane',
-				{ width: 1, height: 0.5 },
-				this.scene
-			);
-			loadingPlane.position.z = 2;
-			loadingPlane.material = loadingMaterial;
-
-			await this.updateLoadingTexture('Initializing...');
-		}
-
-		async createPageInfo() {
-			const pageInfoMaterial = new BABYLON.StandardMaterial('pageInfoMaterial', this.scene);
-			this.pageInfoTexture = new BABYLON.DynamicTexture(
-				'pageInfoTexture',
-				{ width: 256, height: 128 },
-				this.scene
-			);
-			pageInfoMaterial.diffuseTexture = this.pageInfoTexture;
-
-			const pageInfoPlane = BABYLON.MeshBuilder.CreatePlane(
-				'pageInfoPlane',
-				{ width: 0.5, height: 0.25 },
-				this.scene
-			);
-			pageInfoPlane.position.set(0, -1.2, 2);
-			pageInfoPlane.material = pageInfoMaterial;
-		}
-
-		async updateLoadingTexture(text) {
-			if (!this.loadingTexture) {
-				console.warn('Loading texture not initialized');
-				return;
-			}
-			const ctx = this.loadingTexture.getContext();
-			ctx.clearRect(0, 0, 512, 256);
-			ctx.fillStyle = 'white';
-			ctx.font = 'bold 48px Arial';
-			ctx.textAlign = 'center';
-			ctx.textBaseline = 'middle';
-			ctx.fillText(text, 256, 128);
-			this.loadingTexture.update();
-		}
-
-		async updatePageInfo() {
-			if (!this.pageInfoTexture) {
-				console.warn('Page info texture not initialized');
-				return;
-			}
-			const ctx = this.pageInfoTexture.getContext();
-			ctx.clearRect(0, 0, 256, 128);
-			ctx.fillStyle = 'white';
-			ctx.font = 'bold 32px Arial';
-			ctx.textAlign = 'center';
-			ctx.textBaseline = 'middle';
-			ctx.fillText(
-				`Page ${this.currentPage} of ${this.pdfDoc ? this.pdfDoc.numPages : 'N/A'}`,
-				128,
-				64
-			);
-			this.pageInfoTexture.update();
-		}
-
 		async loadPDF(url) {
-			if (!this.isInitialized) {
-				console.error('VRPDFReader not initialized');
-				return;
-			}
-			try {
-				await this.updateLoadingTexture('Loading PDF...');
-				const loadingTask = pdfjsLib.getDocument(url);
-				this.pdfDoc = await loadingTask.promise;
-				await this.renderPage(1);
-				await this.updatePageInfo();
-				const loadingPlane = this.scene.getMeshByName('loadingPlane');
-				if (loadingPlane) {
-					loadingPlane.dispose();
-				}
-			} catch (error) {
-				console.error('Error loading PDF:', error);
-				await this.updateLoadingTexture('Error loading PDF');
-			}
+			const loadingTask = pdfjsLib.getDocument(url);
+			this.pdfDoc = await loadingTask.promise;
+			await this.renderPage(1);
 		}
+
 		async renderPage(num) {
 			const page = await this.pdfDoc.getPage(num);
 			const scale = 1.5;
@@ -287,8 +112,6 @@
 			const context = canvas.getContext('2d');
 			canvas.height = viewport.height;
 			canvas.width = viewport.width;
-			this.currentPage = num;
-			this.updatePageInfo();
 
 			const renderContext = {
 				canvasContext: context,
@@ -338,11 +161,12 @@
 				import.meta.url
 			).toString();
 
+			// Check if VR is available
 			isVRAvailable = await BABYLON.WebXRSessionManager.IsSessionSupportedAsync('immersive-vr');
 
 			vrPDFReader = new VRPDFReader(canvas);
 			await vrPDFReader.initialize();
-			await vrPDFReader.loadPDF('/cannovelresearch.pdf');
+			await vrPDFReader.loadPDF('/lemon.pdf');
 		}
 	});
 </script>
