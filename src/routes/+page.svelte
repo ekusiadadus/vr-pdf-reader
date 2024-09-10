@@ -166,7 +166,7 @@
 
 			vrPDFReader = new VRPDFReader(canvas);
 			await vrPDFReader.initialize();
-			await vrPDFReader.loadPDF('/lemon.pdf');
+			await vrPDFReader.loadPDF('/cannovelresearch.pdf');
 		}
 	});
 </script>
