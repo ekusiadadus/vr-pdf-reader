@@ -37,8 +37,8 @@
 	class VRPDFReader {
 		constructor(canvas) {
 			this.canvas = canvas;
-			this.engine = new BABYLON.Engine(this.canvas, true);
-			this.scene = new BABYLON.Scene(this.engine);
+			this.engine = null;
+			this.scene = null;
 			this.pdfDoc = null;
 			this.currentPage = 1;
 			this.pdfTexture = null;
@@ -47,11 +47,14 @@
 			this.loadingTexture = null;
 			this.pageInfoTexture = null;
 			this.isInitialized = false;
+			this.xrHelper = null;
 		}
 
 		async initialize() {
 			try {
-				this.scene.clearColor = new BABYLON.Color3(0, 0, 0);
+				this.engine = new BABYLON.Engine(this.canvas, true);
+				this.scene = new BABYLON.Scene(this.engine);
+				this.scene.clearColor = new BABYLON.Color4(0, 0, 0, 1);
 
 				const camera = new BABYLON.ArcRotateCamera(
 					'camera',
@@ -65,7 +68,7 @@
 				new BABYLON.HemisphericLight('light', new BABYLON.Vector3(0, 1, 0), this.scene);
 
 				if (isVRAvailable) {
-					const xrHelper = await this.scene.createDefaultXRExperienceAsync({
+					this.xrHelper = await this.scene.createDefaultXRExperienceAsync({
 						floorMeshes: [
 							BABYLON.MeshBuilder.CreateGround('ground', { width: 6, height: 6 }, this.scene)
 						],
@@ -77,20 +80,23 @@
 					});
 
 					const groundMaterial = new BABYLON.StandardMaterial('groundMaterial', this.scene);
-					groundMaterial.diffuseColor = new BABYLON.Color3(0, 0, 0);
-					xrHelper.baseExperience.renderTarget.renderList[0].material = groundMaterial;
+					groundMaterial.diffuseColor = new BABYLON.Color3(0.2, 0.2, 0.2);
+					groundMaterial.alpha = 0.5;
+					this.xrHelper.baseExperience.renderTarget.renderList[0].material = groundMaterial;
 
-					if (xrHelper.baseExperience) {
-						xrHelper.baseExperience.onStateChangedObservable.add((state) => {
+					if (this.xrHelper.baseExperience) {
+						this.xrHelper.baseExperience.onStateChangedObservable.add((state) => {
 							if (state === BABYLON.WebXRState.IN_XR) {
 								isInVR = true;
+								this.adjustForVR();
 							} else if (state === BABYLON.WebXRState.NOT_IN_XR) {
 								isInVR = false;
+								this.adjustForNonVR();
 							}
 						});
 
-						this.setupControllers(xrHelper);
-						this.setupExitVRButton(xrHelper);
+						this.setupControllers();
+						this.setupExitVRButton();
 					} else {
 						console.warn('WebXR not available on this device/browser');
 					}
@@ -121,8 +127,24 @@
 			}
 		}
 
-		setupControllers(xrHelper) {
-			xrHelper.input.onControllerAddedObservable.add((controller) => {
+		adjustForVR() {
+			if (this.pdfMesh) {
+				this.pdfMesh.position = new BABYLON.Vector3(0, 1.6, 2);
+				this.pdfMesh.rotation = new BABYLON.Vector3(0, 0, 0);
+			}
+		}
+
+		adjustForNonVR() {
+			if (this.pdfMesh) {
+				this.pdfMesh.position = new BABYLON.Vector3(0, 0, 2);
+				this.pdfMesh.rotation = new BABYLON.Vector3(0, 0, 0);
+			}
+		}
+
+		setupControllers() {
+			if (!this.xrHelper) return;
+
+			this.xrHelper.input.onControllerAddedObservable.add((controller) => {
 				controller.onMotionControllerInitObservable.add((motionController) => {
 					const xr_ids = motionController.getComponentIds();
 					let triggerComponent = motionController.getComponent(xr_ids[0]);
@@ -140,7 +162,9 @@
 			});
 		}
 
-		setupExitVRButton(xrHelper) {
+		setupExitVRButton() {
+			if (!this.xrHelper) return;
+
 			const exitVRButton = document.createElement('button');
 			exitVRButton.textContent = 'Exit VR';
 			exitVRButton.style.position = 'absolute';
@@ -149,10 +173,10 @@
 			exitVRButton.style.display = 'none';
 
 			exitVRButton.onclick = () => {
-				xrHelper.baseExperience.exitXRAsync();
+				this.xrHelper.baseExperience.exitXRAsync();
 			};
 
-			xrHelper.baseExperience.onStateChangedObservable.add((state) => {
+			this.xrHelper.baseExperience.onStateChangedObservable.add((state) => {
 				if (state === BABYLON.WebXRState.IN_XR) {
 					exitVRButton.style.display = 'block';
 				} else if (state === BABYLON.WebXRState.NOT_IN_XR) {
@@ -162,7 +186,6 @@
 
 			document.body.appendChild(exitVRButton);
 		}
-
 		async createLoadingIndicator() {
 			const loadingMaterial = new BABYLON.StandardMaterial('loadingMaterial', this.scene);
 			this.loadingTexture = new BABYLON.DynamicTexture(
