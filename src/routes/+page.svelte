@@ -45,6 +45,7 @@
 			this.pdfTexture = null;
 			this.pdfMesh = null;
 			this.pageTextMesh = null;
+			this.scale = 1;
 		}
 
 		async initialize() {
@@ -81,12 +82,13 @@
 			this.engine.runRenderLoop(() => {
 				this.scene.render();
 			});
+
 			this.pageTextMesh = BABYLON.MeshBuilder.CreatePlane(
 				'pageText',
 				{ width: 0.5, height: 0.1 },
 				this.scene
 			);
-			this.pageTextMesh.position.set(0, -1.1, 2); // Position below the PDF
+			this.pageTextMesh.position.set(0, -1.1, 2);
 			const pageTextMaterial = new BABYLON.StandardMaterial('pageTextMaterial', this.scene);
 			this.pageTextMesh.material = pageTextMaterial;
 
@@ -104,6 +106,19 @@
 						} else {
 							this.nextPage();
 						}
+					}
+				});
+
+				// 新しい機能: PDFの位置調整
+				webVRController.onPadValuesChangedObservable.add((stateObject) => {
+					const { x, y } = stateObject;
+					if (Math.abs(y) > 0.1) {
+						this.pdfMesh.position.z += y * 0.1;
+					}
+					if (Math.abs(x) > 0.1) {
+						this.scale += x * 0.1;
+						this.scale = Math.max(0.5, Math.min(this.scale, 2)); // スケールを0.5から2の間に制限
+						this.pdfMesh.scaling = new BABYLON.Vector3(this.scale, this.scale, 1);
 					}
 				});
 			});
