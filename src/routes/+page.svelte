@@ -68,7 +68,12 @@
 					const xrHelper = await this.scene.createDefaultXRExperienceAsync({
 						floorMeshes: [
 							BABYLON.MeshBuilder.CreateGround('ground', { width: 6, height: 6 }, this.scene)
-						]
+						],
+						uiOptions: {
+							sessionMode: 'immersive-vr',
+							referenceSpaceType: 'local-floor'
+						},
+						optionalFeatures: true
 					});
 
 					const groundMaterial = new BABYLON.StandardMaterial('groundMaterial', this.scene);
@@ -114,6 +119,48 @@
 				console.error('Error during initialization:', error);
 				this.updateLoadingTexture('Error initializing VR PDF Reader');
 			}
+		}
+
+		setupControllers(xrHelper) {
+			xrHelper.input.onControllerAddedObservable.add((controller) => {
+				controller.onMotionControllerInitObservable.add((motionController) => {
+					const xr_ids = motionController.getComponentIds();
+					let triggerComponent = motionController.getComponent(xr_ids[0]);
+
+					triggerComponent.onButtonStateChangedObservable.add((component) => {
+						if (component.pressed) {
+							if (controller.handedness === 'left') {
+								this.prevPage();
+							} else if (controller.handedness === 'right') {
+								this.nextPage();
+							}
+						}
+					});
+				});
+			});
+		}
+
+		setupExitVRButton(xrHelper) {
+			const exitVRButton = document.createElement('button');
+			exitVRButton.textContent = 'Exit VR';
+			exitVRButton.style.position = 'absolute';
+			exitVRButton.style.bottom = '10px';
+			exitVRButton.style.left = '10px';
+			exitVRButton.style.display = 'none';
+
+			exitVRButton.onclick = () => {
+				xrHelper.baseExperience.exitXRAsync();
+			};
+
+			xrHelper.baseExperience.onStateChangedObservable.add((state) => {
+				if (state === BABYLON.WebXRState.IN_XR) {
+					exitVRButton.style.display = 'block';
+				} else if (state === BABYLON.WebXRState.NOT_IN_XR) {
+					exitVRButton.style.display = 'none';
+				}
+			});
+
+			document.body.appendChild(exitVRButton);
 		}
 
 		async createLoadingIndicator() {
