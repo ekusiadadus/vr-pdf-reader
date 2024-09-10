@@ -64,14 +64,19 @@
 			new BABYLON.HemisphericLight('light', new BABYLON.Vector3(0, 1, 0), this.scene);
 
 			if (isVRAvailable) {
-				const vrHelper = this.scene.createDefaultVRExperience({
-					createDeviceOrientationCamera: false
+				const xrHelper = await this.scene.createDefaultXRExperienceAsync({
+					uiOptions: {
+						sessionMode: 'immersive-ar'
+					}
 				});
-				if (vrHelper.isAvailable) {
-					vrHelper.enableInteractions();
-					this.setupControllers(vrHelper);
+				if (xrHelper.baseExperience) {
+					xrHelper.baseExperience.onStateChangedObservable.add((state) => {
+						if (state === BABYLON.WebXRState.IN_XR) {
+							this.setupControllers(xrHelper);
+						}
+					});
 				} else {
-					console.warn('VR is not available on this device/browser');
+					console.warn('XR is not available on this device/browser');
 				}
 			}
 
@@ -100,42 +105,66 @@
 			});
 		}
 
-		setupControllers(vrHelper) {
-			vrHelper.onControllerMeshLoaded.add((webVRController) => {
-				webVRController.onTriggerStateChangedObservable.add((state) => {
-					if (state.value > 0.5) {
-						if (webVRController.hand === 'left') {
-							this.prevPage();
-						} else {
-							this.nextPage();
-						}
-					}
-				});
-
-				webVRController.onPadValuesChangedObservable.add((stateObject) => {
-					const { x, y } = stateObject;
-					if (Math.abs(y) > 0.1) {
-						this.scroll(y * 0.1); // スクロール機能
-					}
-					if (Math.abs(x) > 0.1) {
-						this.zoom(x * 0.1); // ズーム機能
-					}
-				});
-
-				// 新しい機能: テキスト選択とハイライト
-				webVRController.onSecondaryButtonStateChangedObservable.add((state) => {
-					if (state.pressed) {
-						this.toggleTextSelection(webVRController.position);
-					}
-				});
-
-				// 新しい機能: 注釈追加
-				webVRController.onMainButtonStateChangedObservable.add((state) => {
-					if (state.pressed) {
-						this.addAnnotation(webVRController.position);
-					}
+		setupControllers(xrHelper) {
+			xrHelper.input.onControllerAddedObservable.add((controller) => {
+				controller.onMotionControllerInitObservable.add((motionController) => {
+					const xr_ids = motionController.getComponentIds();
+					xr_ids.forEach((id) => {
+						const component = motionController.getComponent(id);
+						this.setupComponentActions(component, controller);
+					});
 				});
 			});
+		}
+
+		setupComponentActions(component, controller) {
+			switch (component.id) {
+				case 'xr-standard-trigger':
+					component.onButtonStateChangedObservable.add((component) => {
+						if (component.pressed) {
+							if (controller.handedness === 'left') {
+								this.prevPage();
+							} else {
+								this.nextPage();
+							}
+						}
+					});
+					break;
+				case 'xr-standard-thumbstick':
+					component.onAxisValueChangedObservable.add((values) => {
+						const [x, y] = values.current;
+						if (Math.abs(y) > 0.1) {
+							this.scroll(y * 0.1);
+						}
+						if (Math.abs(x) > 0.1) {
+							this.zoom(x * 0.1);
+						}
+					});
+					break;
+				case 'a-button':
+				case 'x-button':
+					component.onButtonStateChangedObservable.add((component) => {
+						if (component.pressed) {
+							this.toggleTextSelection(controller.position);
+						}
+					});
+					break;
+				case 'b-button':
+				case 'y-button':
+					component.onButtonStateChangedObservable.add((component) => {
+						if (component.pressed) {
+							this.addAnnotation(controller.position);
+						}
+					});
+					break;
+				case 'xr-standard-squeeze':
+					component.onButtonStateChangedObservable.add((component) => {
+						if (component.pressed) {
+							this.resetView();
+						}
+					});
+					break;
+			}
 		}
 
 		async loadPDF(url) {
@@ -268,6 +297,14 @@
 				ctx.fillStyle = 'rgba(255, 255, 0, 0.3)';
 				ctx.fillRect(50, 50, 100, 20); // 仮の位置とサイズ
 			}
+		}
+
+		resetView() {
+			this.scale = 1;
+			this.scrollPosition = 0;
+			this.pdfMesh.scaling = new BABYLON.Vector3(1, 1, 1);
+			this.pdfMesh.position.y = 0;
+			this.renderPage(this.currentPage);
 		}
 	}
 
