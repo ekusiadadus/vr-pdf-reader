@@ -8,6 +8,7 @@
 	let canvas;
 	let vrPDFReader;
 	let pdfjsLib;
+	let isVRAvailable = false;
 
 	// Promise.withResolvers polyfill
 	if (typeof Promise.withResolvers === 'undefined') {
@@ -55,10 +56,17 @@
 			camera.attachControl(this.canvas, true);
 			new BABYLON.HemisphericLight('light', new BABYLON.Vector3(0, 1, 0), this.scene);
 
-			const vrHelper = this.scene.createDefaultVRExperience({
-				createDeviceOrientationCamera: false
-			});
-			vrHelper.enableInteractions();
+			if (isVRAvailable) {
+				const vrHelper = this.scene.createDefaultVRExperience({
+					createDeviceOrientationCamera: false
+				});
+				if (vrHelper.isAvailable) {
+					vrHelper.enableInteractions();
+					this.setupControllers(vrHelper);
+				} else {
+					console.warn('VR is not available on this device/browser');
+				}
+			}
 
 			this.pdfMesh = BABYLON.MeshBuilder.CreatePlane(
 				'pdfPlane',
@@ -66,8 +74,6 @@
 				this.scene
 			);
 			this.pdfMesh.position.z = 2;
-
-			this.setupControllers(vrHelper);
 
 			this.engine.runRenderLoop(() => {
 				this.scene.render();
@@ -91,7 +97,6 @@
 				});
 			});
 		}
-
 		async loadPDF(url) {
 			const loadingTask = pdfjsLib.getDocument(url);
 			this.pdfDoc = await loadingTask.promise;
@@ -156,18 +161,34 @@
 				import.meta.url
 			).toString();
 
+			// Check if VR is available
+			isVRAvailable = await BABYLON.WebXRSessionManager.IsSessionSupportedAsync('immersive-vr');
+
 			vrPDFReader = new VRPDFReader(canvas);
 			await vrPDFReader.initialize();
-			await vrPDFReader.loadPDF('./lemon.pdf');
+			await vrPDFReader.loadPDF('/lemon.pdf');
 		}
 	});
 </script>
 
 <canvas bind:this={canvas}></canvas>
 
+{#if !isVRAvailable}
+	<div class="non-vr-controls">
+		<button on:click={() => vrPDFReader.prevPage()}>Previous Page</button>
+		<button on:click={() => vrPDFReader.nextPage()}>Next Page</button>
+	</div>
+{/if}
+
 <style>
 	canvas {
 		width: 100%;
 		height: 100vh;
+	}
+	.non-vr-controls {
+		position: absolute;
+		bottom: 20px;
+		left: 50%;
+		transform: translateX(-50%);
 	}
 </style>
